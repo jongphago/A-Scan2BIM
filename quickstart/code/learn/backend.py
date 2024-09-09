@@ -274,7 +274,7 @@ class Backend:
             # self.aug_corners = aug_corners
 
         else:
-            self.init_corner_models(floor_idx)
+            self.init_corner_models(floor_idx=floor_idx)
             self.cached_corners = self.get_pred_corners()
 
             # save the corners so we don't have to do this again
@@ -2277,9 +2277,9 @@ def demo_floor():
 
     backend = Backend()
     backend.init_floor(floor_idx)
-    backend.init_corner_models(floor_idx)
-    backend.init_edge_models(floor_idx)
-    backend.init_metric_model(floor_idx)
+    backend.init_corner_models(floor_idx=floor_idx)
+    backend.init_edge_models(floor_idx=floor_idx)
+    backend.init_metric_model(floor_idx=floor_idx)
     backend.cache_image_feats(backend.cached_corners)
 
     backend.start_server()
