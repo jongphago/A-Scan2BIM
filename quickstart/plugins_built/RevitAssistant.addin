@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Revit Assistant</Name>
+    <Assembly>RevitAssistant.dll</Assembly>
+    <FullClassName>RevitAssistant.App</FullClassName>
+    <ClientId>829AAA02-3B6C-4D1A-BC3E-B91E5DC62C08</ClientId>
+    <VendorId>SFU</VendorId>
+  </AddIn>
+</RevitAddIns>
