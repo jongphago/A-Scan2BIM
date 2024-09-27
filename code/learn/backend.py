@@ -87,12 +87,14 @@ class Backend:
             raise Exception
 
     def init_corner_models(self, ckpt_path='', floor_idx=-1):
+        # Load corner backbone
         backbone = ResNetBackbone()
         strides = backbone.strides
         num_channels = backbone.num_channels
         backbone = backbone.cuda()
         backbone.eval()
 
+        # Load corner model
         corner_model = CornerEnum(
             input_dim=128,
             hidden_dim=256,
@@ -128,12 +130,14 @@ class Backend:
     def init_edge_models(self, ckpt_path='', floor_idx=-1):
         start = time.time()
 
+        # Load edge backbone
         backbone = ResNetBackbone()
         strides = backbone.strides
         num_channels = backbone.num_channels
         backbone = backbone.cuda()
         backbone.eval()
 
+        # Load edge model
         edge_model = EdgeEnum(
             input_dim=128,
             hidden_dim=256,
@@ -166,6 +170,7 @@ class Backend:
     def init_metric_model(self, ckpt_path='', floor_idx=-1):
         start = time.time()
 
+        # Load metric model
         metric_model = MetricModel(d_model=256)
         metric_model = metric_model.cuda()
         metric_model.eval()
@@ -186,16 +191,19 @@ class Backend:
     def init_floor(self, floor_idx):
         start = time.time()
 
+        # Load floor name
         floor_f = os.path.join(self.data_path, "all_floors.txt")
         with open(floor_f, "r") as f:
             floor_names = [x.strip() for x in f.readlines()]
-        self.floor_name = floor_names[floor_idx].split(",")[0]
-
+        self.floor_name: str = floor_names[floor_idx].split(",")[0]
         print('Loading %s' % self.floor_name)
+        
+        # Load boundary of the floor
         with open("%s/bounds/%s.csv" % (self.data_path, self.floor_name), "r") as f:
             self.bounds = [float(x) for x in f.readline().strip().split(",")]
+            # ~^ [minx, miny, maxx, maxy]
 
-        # load full density image
+        # Load full density image
         density_slices = []
         for slice_i in range(7):
             slice_f = "%s/density/%s/density_%02d.npy" % (
@@ -211,9 +219,9 @@ class Backend:
             my_utils.normalize_density(density_slices[4]),
             my_utils.normalize_density(np.sum(density_slices[5:7], axis=0)),
         ]
-        density_full = np.stack(density_full, axis=2)
+        density_full = np.stack(density_full, axis=2)  # (1222, 1462, 3)
 
-        # we need to square pad the image
+        # Pad density image to square
         (h, w, _) = density_full.shape
         side_len = max(h, w)
 
@@ -227,28 +235,29 @@ class Backend:
             density_full,
             [[pad_h_before, pad_h_after], [pad_w_before, pad_w_after], [0, 0]],
         )
-        self.density_full = density_full
+        self.density_full = density_full  # (1462, 1462, 3)
 
-        # load GT annotation
+        # Load GT annotation
         annot_f = os.path.join(self.data_path, "annot/%s.json" % self.floor_name)
         with open(annot_f, "r") as f:
             annot = json.load(f)
 
-        annot = np.array(list(annot.values()))
-        gt_coords, gt_widths = annot[:, :4], annot[:, 4]
+        annot = np.array(list(annot.values()))  # (82, 5)
+        gt_coords, gt_widths = annot[:, :4], annot[:, 4]  # (82, 4), (82,)
 
         gt_coords += [pad_w_before, pad_h_before, pad_w_before, pad_h_before]
-        gt_widths = np.floor(gt_widths * 12).astype(int)
+        gt_widths = np.floor(gt_widths * 12).astype(int)  # m -> ft
 
         if self.revectorize:
             gt_coords, gt_widths = my_utils.revectorize(gt_coords, gt_widths)
-        gt_corners, gt_edge_ids = my_utils.corners_and_edges(gt_coords)
+            # ~^ (120, 4), (120,)
+        gt_corners, _gt_edge_ids = my_utils.corners_and_edges(gt_coords)
+        # ~^ (122, 2), (120, 2)
+        self.gt_coords = gt_coords  # (120, 4)
+        self.gt_widths = gt_widths  # (120,)
+        self.gt_corners = gt_corners  # (122, 2)
 
-        self.gt_coords = gt_coords
-        self.gt_corners = gt_corners
-        self.gt_widths = gt_widths
-
-        # load predicted corners
+        # Load predicted corners
         corner_f = os.path.join(
             self.data_path, "pred_corners/%s.json" % self.floor_name
         )
@@ -259,7 +268,7 @@ class Backend:
             cached_corners = np.array(cached_corners)
             # cached_corners -= 128
             cached_corners += [pad_w_before, pad_h_before]
-            self.cached_corners = cached_corners
+            self.cached_corners = cached_corners  # (105, 2)
 
             # # augment corners for the sake of testing
             # aug_corners = gt_corners.copy()
@@ -274,7 +283,7 @@ class Backend:
             # self.aug_corners = aug_corners
 
         else:
-            self.init_corner_models(floor_idx)
+            self.init_corner_models(floor_idx=floor_idx)
             self.cached_corners = self.get_pred_corners()
 
             # save the corners so we don't have to do this again
@@ -320,21 +329,26 @@ class Backend:
         self.density_full = density_full
 
     def cache_image_feats(self, corners):
-        image = self.density_full.copy()
+        image = self.density_full.copy()  # (1462, 1462, 3)
 
-        image, corners, scale = my_utils.normalize_floor(image, corners)
-        image = my_utils.process_image(image)
+        image, _corners, scale = my_utils.normalize_floor(image, corners)
+        # ~^ (1023, 1023, 3), (105, 2), 0.700
+        image = my_utils.process_image(image)  # (3, 1023, 1023)
 
         data = {"img": image}
         data = collate_fn_seq([data])
 
+        # Extract image features
         with torch.no_grad():
             image = data["img"].cuda()
             image_feats, feat_mask, _ = self.edge_backbone(image)
 
         self.norm_scale = scale
-        self.image_feats = image_feats
-        self.feat_mask = feat_mask
+        self.image_feats: dict = image_feats
+        # image_feats['0'].shape  torch.Size([1, 512, 128, 128])
+        # image_feats['1'].shape  torch.Size([1, 1024, 64, 64])
+        # image_feats['2'].shape  torch.Size([1, 2048, 32, 32])
+        self.feat_mask = feat_mask  # torch.Size([1, 1023, 1023])
 
     def get_pred_corners(self):
         # hyperparameters
@@ -486,6 +500,7 @@ class Backend:
         corner_nums = data["processed_corners_lengths"]
         max_candidates = torch.stack([corner_nums.max() * 3] * len(corner_nums), dim=0)
 
+        # Predict coordinates with edge model
         # network inference
         with torch.no_grad():
             # image = data["img"].cuda()
@@ -1981,8 +1996,8 @@ def compute_metrics(
 
     for floor_idx in range(16):
         backend = Backend(deform_type=deform_type, num_samples=num_samples)
-        backend.init_edge_models(floor_idx)
-        backend.init_floor(floor_idx)
+        backend.init_edge_models(floor_idx=floor_idx)
+        backend.init_floor(floor_idx=floor_idx)
 
         corners = backend.cached_corners
         backend.cache_image_feats(corners)
@@ -2166,7 +2181,7 @@ def compute_metrics_corner():
 
     for floor_idx in range(16):
         backend = Backend()
-        backend.init_floor(floor_idx)
+        backend.init_floor(floor_idx=floor_idx)
 
         [pad_w_before, pad_h_before, pad_w_after, pad_h_after] = backend.square_pad
 
@@ -2203,8 +2218,8 @@ def export_corners():
 
     for floor_idx in range(16):
         backend = Backend()
-        backend.init_floor(floor_idx)
-        backend.init_corner_models(floor_idx)
+        backend.init_floor(floor_idx=floor_idx)
+        backend.init_corner_models(floor_idx=floor_idx)
 
         gt_corners = backend.gt_corners
         pred_corners = backend.get_pred_corners()
@@ -2242,8 +2257,8 @@ def export_corners():
 def save_edge_preds():
     for floor_idx in range(16):
         backend = Backend(deform_type="DETR_dense", num_samples=16)
-        backend.init_edge_models(floor_idx)
-        backend.init_floor(floor_idx)
+        backend.init_edge_models(floor_idx=floor_idx)
+        backend.init_floor(floor_idx=floor_idx)
 
         corners = backend.cached_corners
         backend.cache_image_feats(corners)
@@ -2276,10 +2291,10 @@ def demo_floor():
     floor_idx = 11
 
     backend = Backend()
-    backend.init_floor(floor_idx)
-    backend.init_corner_models(floor_idx)
-    backend.init_edge_models(floor_idx)
-    backend.init_metric_model(floor_idx)
+    backend.init_floor(floor_idx=floor_idx)
+    backend.init_corner_models(floor_idx=floor_idx)
+    backend.init_edge_models(floor_idx=floor_idx)
+    backend.init_metric_model(floor_idx=floor_idx)
     backend.cache_image_feats(backend.cached_corners)
 
     backend.start_server()
