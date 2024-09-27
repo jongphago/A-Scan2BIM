@@ -21,7 +21,13 @@ from torch.utils.data.dataloader import default_collate
 import sys
 sys.path.append('../preprocess')
 print(sys.path)
-from data_gen import crop_pc, crop_pc_z, get_density, slice_intervals
+
+from quickstart.code.preprocess.data_gen import (
+    crop_pc,
+    crop_pc_z,
+    get_density,
+    slice_intervals,
+)
 
 all_combinations = dict()
 for length in range(2, 500):
